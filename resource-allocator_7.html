@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resource Allocator</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #f5f5f7;
+    --surface:   #ffffff;
+    --surface2:  #f5f5f7;
+    --border:    rgba(0,0,0,0.08);
+    --border-md: rgba(0,0,0,0.15);
+    --text:      #1d1d1f;
+    --muted:     #86868b;
+    --accent:    #0071e3;
+    --accent-lt: #e8f1fb;
+    --red:       #ff3b30;
+    --red-lt:    #fff2f1;
+    --amber:     #ff9500;
+    --amber-lt:  #fff8ee;
+    --green:     #34c759;
+    --green-lt:  #f0fbf3;
+    --font:      -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    --font-disp: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+    --radius:    10px;
+    --radius-sm: 8px;
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.47;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+
+  /* Sidebar */
+  .sidebar {
+    background: rgba(255,255,255,0.8);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-right: 1px solid var(--border);
+    color: var(--text);
+    padding: 20px 8px;
+    display: flex; flex-direction: column; gap: 2px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  .sidebar-logo {
+    font-family: var(--font-disp);
+    font-size: 16px; font-weight: 700; color: var(--text);
+    letter-spacing: -0.03em; line-height: 1.2;
+    padding: 4px 12px 18px;
+  }
+  .sidebar-logo span { color: var(--accent); }
+  .nav-section { display: flex; flex-direction: column; gap: 1px; margin-bottom: 6px; }
+  .nav-label { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; padding: 0 12px; margin: 10px 0 4px; }
+  .nav-btn {
+    background: none; border: none; color: var(--muted); font-family: var(--font);
+    font-size: 14px; padding: 7px 12px; border-radius: var(--radius-sm); cursor: pointer;
+    text-align: left; transition: background 0.12s, color 0.12s; width: 100%; font-weight: 400;
+  }
+  .nav-btn:hover { background: rgba(0,0,0,0.05); color: var(--text); }
+  .nav-btn.active { background: rgba(0,113,227,0.1); color: var(--accent); font-weight: 500; }
+  .sidebar-add { margin-top: auto; display: flex; flex-direction: column; gap: 1px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .btn-add {
+    background: none; color: var(--accent); border: none; border-radius: var(--radius-sm);
+    padding: 7px 12px; font-family: var(--font); font-size: 14px; cursor: pointer;
+    text-align: left; transition: background 0.12s; width: 100%; font-weight: 400;
+  }
+  .btn-add:hover { background: rgba(0,113,227,0.08); }
+
+  /* Main */
+  .main { padding: 32px 40px; display: flex; flex-direction: column; gap: 24px; }
+
+  /* Week nav */
+  .week-nav { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+  .week-nav h1 { font-family: var(--font-disp); font-size: 22px; font-weight: 700; color: var(--text); flex: 1; letter-spacing: -0.03em; }
+  .week-nav h1 em { font-style: normal; font-weight: 400; color: var(--muted); font-size: 18px; }
+  .week-arrows { display: flex; gap: 4px; }
+  .arrow-btn { background: var(--surface); border: 1px solid var(--border); border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 15px; color: var(--accent); transition: background 0.12s; display: flex; align-items: center; justify-content: center; }
+  .arrow-btn:hover { background: var(--accent-lt); }
+  .today-btn { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 0 14px; height: 30px; cursor: pointer; font-family: var(--font); font-size: 13px; color: var(--accent); transition: background 0.12s; font-weight: 500; }
+  .today-btn:hover { background: var(--accent-lt); }
+
+  /* Summary */
+  .summary-row { display: flex; gap: 10px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; flex: 1; }
+  .stat-card .val { font-family: var(--font-disp); font-size: 34px; font-weight: 700; line-height: 1; letter-spacing: -0.04em; }
+  .stat-card .lbl { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .stat-card.over .val { color: var(--red); }
+  .stat-card.low  .val { color: var(--amber); }
+  .stat-card.ok   .val { color: var(--green); }
+
+  /* Table */
+  .alloc-table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { font-size: 12px; font-weight: 600; color: var(--muted); padding: 11px 16px; text-align: left; border-bottom: 1px solid var(--border); background: var(--surface2); letter-spacing: -0.01em; }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface2); }
+  td { padding: 12px 16px; vertical-align: middle; }
+  .person-name { font-weight: 600; font-size: 14px; }
+  .person-role { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+  /* Chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 20px; font-size: 12px; font-weight: 500; border: 1px solid transparent; }
+  .chip .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .chip-remove { background: none; border: none; cursor: pointer; color: inherit; font-size: 13px; line-height: 1; padding: 0; opacity: 0.5; transition: opacity 0.12s; margin-left: 2px; }
+  .chip-remove:hover { opacity: 1; }
+
+  /* Badges */
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .badge-over  { background: var(--red-lt);   color: var(--red); }
+  .badge-ok    { background: var(--green-lt);  color: #1a7f37; }
+  .badge-low   { background: var(--amber-lt);  color: #b36200; }
+  .badge-empty { background: var(--surface2);  color: var(--muted); }
+
+  /* Bars */
+  .load-bar-wrap { display: flex; align-items: center; gap: 8px; }
+  .load-bar-bg { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: visible; position: relative; }
+  .load-bar-fill { height: 4px; border-radius: 2px; transition: width 0.3s; max-width: 100%; }
+  .load-bar-over { position: absolute; right: 0; top: 0; height: 4px; border-radius: 0 2px 2px 0; background: var(--red); }
+
+  /* Inline add button */
+  .add-alloc-btn { background: none; border: none; border-radius: var(--radius-sm); color: var(--accent); font-family: var(--font); font-size: 13px; padding: 4px 8px; cursor: pointer; transition: background 0.12s; font-weight: 500; }
+  .add-alloc-btn:hover { background: var(--accent-lt); }
+
+  /* Empty state */
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
+  .empty-state h2 { font-family: var(--font-disp); font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 8px; letter-spacing: -0.02em; }
+
+  /* Modal */
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.36); display: flex; align-items: center; justify-content: center; z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+  .modal-bg.open { opacity: 1; pointer-events: all; }
+  .modal { background: var(--surface); border-radius: 14px; padding: 24px; width: 440px; max-width: 95vw; box-shadow: 0 20px 60px rgba(0,0,0,0.14); transform: translateY(8px) scale(0.98); transition: transform 0.2s; }
+  .modal-bg.open .modal { transform: translateY(0) scale(1); }
+  .modal h2 { font-family: var(--font-disp); font-size: 17px; font-weight: 600; margin-bottom: 18px; letter-spacing: -0.02em; }
+  .form-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+  .form-row label { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .form-row input, .form-row select { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 9px 12px; font-family: var(--font); font-size: 14px; color: var(--text); outline: none; transition: border-color 0.15s, box-shadow 0.15s; width: 100%; appearance: none; -webkit-appearance: none; }
+  .form-row input:focus, .form-row select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,113,227,0.15); }
+  .form-row-inline { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  .btn-cancel { background: var(--surface2); border: none; border-radius: var(--radius-sm); padding: 9px 18px; font-family: var(--font); font-size: 14px; cursor: pointer; color: var(--text); transition: background 0.12s; font-weight: 500; }
+  .btn-cancel:hover { background: rgba(0,0,0,0.08); }
+  .btn-save { background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 9px 20px; font-family: var(--font); font-size: 14px; cursor: pointer; transition: opacity 0.12s; font-weight: 600; }
+  .btn-save:hover { opacity: 0.86; }
+  .btn-danger { background: var(--red-lt); color: var(--red); border: none; border-radius: var(--radius-sm); padding: 9px 16px; font-family: var(--font); font-size: 14px; cursor: pointer; margin-right: auto; transition: background 0.12s; font-weight: 500; }
+  .btn-danger:hover { background: #ffdcda; }
+
+  /* People/Projects panel */
+  .panel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .panel-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .panel-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--surface2); }
+  .panel-header span { font-size: 13px; font-weight: 600; color: var(--text); }
+  .panel-item { display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--border); font-size: 13px; transition: background 0.1s; }
+  .panel-item:hover { background: var(--surface2); }
+  .panel-item:last-child { border-bottom: none; }
+  .panel-item-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .panel-item-text { flex: 1; }
+  .panel-item-name { font-weight: 500; }
+  .panel-item-sub { font-size: 12px; color: var(--muted); }
+  .panel-item-del { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 15px; opacity: 0.4; transition: opacity 0.12s; padding: 2px 4px; }
+  .panel-item-del:hover { opacity: 1; color: var(--red); }
+
+  .view { display: none; }
+  .view.active { display: contents; }
+
+  /* Projects overview */
+  .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .project-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .project-card-header { padding: 14px 16px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 10px; }
+  .project-color-bar { width: 3px; border-radius: 2px; flex-shrink: 0; align-self: stretch; min-height: 36px; }
+  .project-card-title { font-weight: 600; font-size: 14px; line-height: 1.3; }
+  .project-card-status { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .project-card-meta { margin-left: auto; text-align: right; flex-shrink: 0; }
+  .project-card-fte { font-family: var(--font-disp); font-size: 24px; font-weight: 700; line-height: 1; letter-spacing: -0.04em; }
+  .project-card-fte-lbl { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .project-stacked-bar { height: 4px; display: flex; overflow: hidden; gap: 1px; }
+  .project-stacked-seg { height: 100%; transition: width 0.3s; }
+  .project-people { padding: 4px 0; }
+  .project-person-row { display: flex; align-items: center; gap: 10px; padding: 9px 16px; border-bottom: 1px solid var(--border); font-size: 13px; transition: background 0.1s; }
+  .project-person-row:hover { background: var(--surface2); }
+  .project-person-row:last-child { border-bottom: none; }
+  .project-person-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .project-person-name { flex: 1; font-weight: 500; }
+  .project-person-role { font-size: 12px; color: var(--muted); }
+  .project-person-pct { font-weight: 600; font-size: 13px; min-width: 36px; text-align: right; }
+  .project-person-bar-bg { width: 52px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .project-person-bar-fill { height: 3px; border-radius: 2px; }
+  .project-empty { padding: 16px; font-size: 13px; color: var(--muted); text-align: center; }
+
+  /* Gantt */
+  .gantt-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .gantt-controls { display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--border); background: var(--surface2); }
+  .gantt-controls span { font-size: 12px; font-weight: 600; color: var(--muted); margin-right: auto; }
+  .gantt-year-btn { background: none; border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer; font-size: 15px; color: var(--accent); transition: background 0.12s; display: flex; align-items: center; justify-content: center; }
+  .gantt-year-btn:hover { background: var(--accent-lt); }
+  .gantt-year-label { font-size: 14px; font-weight: 600; min-width: 40px; text-align: center; letter-spacing: -0.02em; }
+  .gantt-scroll { overflow-x: auto; }
+  .gantt-grid { display: grid; min-width: 700px; }
+  .gantt-header { display: grid; border-bottom: 1px solid var(--border); background: var(--surface2); position: sticky; top: 0; z-index: 2; }
+  .gantt-header-name { padding: 8px 16px; font-size: 12px; font-weight: 600; color: var(--muted); border-right: 1px solid var(--border); }
+  .gantt-month-label { padding: 8px 0; font-size: 11px; font-weight: 600; color: var(--muted); text-align: center; border-right: 1px solid var(--border); }
+  .gantt-month-label:last-child { border-right: none; }
+  .gantt-row { display: grid; border-bottom: 1px solid var(--border); min-height: 44px; }
+  .gantt-row:last-child { border-bottom: none; }
+  .gantt-row:hover { background: var(--surface2); }
+  .gantt-name-cell { padding: 0 16px; display: flex; flex-direction: column; justify-content: center; border-right: 1px solid var(--border); font-size: 13px; position: sticky; left: 0; background: inherit; z-index: 1; min-height: 44px; }
+  .gantt-name-cell .gn { font-weight: 600; }
+  .gantt-name-cell .gr { font-size: 11px; color: var(--muted); }
+  .gantt-month-cell { position: relative; border-right: 1px solid var(--border); padding: 4px 3px; display: flex; flex-direction: column; gap: 2px; }
+  .gantt-month-cell:last-child { border-right: none; }
+  .gantt-month-cell.is-current { background: rgba(0,113,227,0.04); }
+  .gantt-bar { border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.4; cursor: default; transition: opacity 0.12s; }
+  .gantt-bar:hover { opacity: 0.8; }
+  .gantt-today-line { position: absolute; top: 0; bottom: 0; width: 1.5px; background: var(--accent); opacity: 0.6; pointer-events: none; z-index: 3; }
+  .gantt-empty { padding: 40px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  /* Timesheet */
+  .ts-person-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface2); }
+  .ts-person-tab { background: none; border: none; border-radius: 20px; padding: 5px 14px; font-family: var(--font); font-size: 13px; color: var(--muted); cursor: pointer; transition: all 0.12s; font-weight: 500; }
+  .ts-person-tab:hover { background: rgba(0,0,0,0.06); color: var(--text); }
+  .ts-person-tab.active { background: var(--accent); color: #fff; }
+  .ts-matrix-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .ts-matrix-scroll { overflow-x: auto; }
+  .ts-matrix { width: 100%; border-collapse: collapse; min-width: 600px; }
+  .ts-matrix th { font-size: 12px; font-weight: 600; color: var(--muted); padding: 10px 12px; text-align: center; border-bottom: 1px solid var(--border); background: var(--surface2); white-space: nowrap; letter-spacing: -0.01em; }
+  .ts-matrix th.proj-col { text-align: left; min-width: 140px; }
+  .ts-matrix th.today-col { color: var(--accent); }
+  .ts-matrix th.sum-col { border-left: 1px solid var(--border-md); color: var(--text); }
+  .ts-matrix td { padding: 0; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); vertical-align: top; }
+  .ts-matrix td.proj-name-cell { padding: 0 14px; vertical-align: middle; min-width: 140px; }
+  .ts-matrix td.sum-cell { border-left: 1px solid var(--border-md); text-align: center; padding: 10px 12px; font-weight: 600; font-size: 14px; color: var(--text); vertical-align: middle; background: var(--surface2); }
+  .ts-matrix td.sum-cell.zero { color: var(--muted); font-weight: 400; }
+  .ts-matrix tr.sum-row td { background: var(--surface2); border-top: 1px solid var(--border-md); font-weight: 600; padding: 10px 12px; text-align: center; font-size: 14px; border-bottom: none; }
+  .ts-matrix tr.sum-row td.proj-name-cell { font-size: 12px; color: var(--muted); font-weight: 500; text-align: left; }
+  .ts-matrix tr.sum-row td.grand-total { border-left: 1px solid var(--border-md); color: var(--accent); font-size: 15px; font-weight: 700; }
+  .ts-matrix tr:last-child td { border-bottom: none; }
+  .ts-matrix td:last-child { border-right: none; }
+  .ts-proj-label { display: flex; align-items: center; gap: 8px; padding: 10px 0; }
+  .ts-proj-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .ts-proj-name-text { font-size: 13px; font-weight: 500; }
+  .ts-cell-inner { min-height: 52px; padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; align-items: stretch; }
+  .ts-cell-entry { display: flex; align-items: center; justify-content: space-between; gap: 4px; font-size: 12px; padding: 4px 7px; border-radius: 6px; background: var(--surface2); }
+  .ts-cell-hours { font-weight: 600; color: var(--text); }
+  .ts-cell-note { color: var(--muted); font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ts-cell-actions { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+  .ts-cell-entry:hover .ts-cell-actions { opacity: 1; }
+  .ts-cell-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 12px; padding: 0 2px; transition: color 0.12s; }
+  .ts-cell-btn:hover { color: var(--text); }
+  .ts-add-cell { background: none; border: none; border-radius: 6px; color: var(--accent); font-family: var(--font); font-size: 12px; padding: 4px 7px; cursor: pointer; transition: background 0.12s; text-align: center; width: 100%; font-weight: 500; }
+  .ts-add-cell:hover { background: var(--accent-lt); }
+  .ts-no-alloc { font-size: 12px; color: var(--border-md); text-align: center; padding: 16px 4px; }
+  .ts-empty-state { padding: 40px; text-align: center; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">Resource Allocator</div>
+
+    <nav class="nav-section">
+      <div class="nav-label">Views</div>
+      <button class="nav-btn active" onclick="showView('allocation')">↦ Allocation matrix</button>
+      <button class="nav-btn" onclick="showView('projects')">◫ Projects overview</button>
+      <button class="nav-btn" onclick="showView('gantt')">▤ Gantt chart</button>
+      <button class="nav-btn" onclick="showView('timesheet')">⏱ Timesheets</button>
+      <button class="nav-btn" onclick="showView('manage')">⊞ People & projects</button>
+    </nav>
+
+    <div class="sidebar-add">
+      <button class="btn-add" onclick="openModal('person')">+ Add person</button>
+      <button class="btn-add" onclick="openModal('project')">+ Add project</button>
+      <button class="btn-add" onclick="openModal('allocation')">+ Add allocation</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- Allocation view -->
+    <div id="view-allocation" class="view active">
+      <div class="week-nav">
+        <h1 id="week-label">Week of <em>loading…</em></h1>
+        <div class="week-arrows">
+          <button class="arrow-btn" onclick="shiftWeek(-1)" title="Previous week">‹</button>
+          <button class="today-btn" onclick="goToday()">Today</button>
+          <button class="arrow-btn" onclick="shiftWeek(1)" title="Next week">›</button>
+        </div>
+      </div>
+
+      <div class="summary-row" id="summary-row"></div>
+
+      <div class="alloc-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:180px">Person</th>
+              <th>Allocations this week</th>
+              <th style="width:90px">Total</th>
+              <th style="width:160px">Load</th>
+              <th style="width:40px"></th>
+            </tr>
+          </thead>
+          <tbody id="alloc-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Projects overview view -->
+    <div id="view-projects" class="view">
+      <div class="week-nav">
+        <h1 id="proj-week-label">Projects — week of <em>loading…</em></h1>
+        <div class="week-arrows">
+          <button class="arrow-btn" onclick="shiftWeek(-1)">‹</button>
+          <button class="today-btn" onclick="goToday()">Today</button>
+          <button class="arrow-btn" onclick="shiftWeek(1)">›</button>
+        </div>
+      </div>
+      <div class="projects-grid" id="projects-grid"></div>
+    </div>
+
+    <!-- Gantt view -->
+    <div id="view-gantt" class="view">
+      <div class="week-nav">
+        <h1>Gantt <em>chart</em></h1>
+        <div style="display:flex;align-items:center;gap:14px;font-size:11px;color:var(--muted);margin-right:16px">
+          <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:#e8f0eb;border-bottom:2px solid #3a7a55;display:inline-block"></span>90–100%</span>
+          <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:#fdf3e3;border-bottom:2px solid #ba7517;display:inline-block"></span>80–90%</span>
+          <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:#fbeae9;border-bottom:2px solid #b83228;display:inline-block"></span>&lt;80% or &gt;100%</span>
+        </div>
+        <div class="week-arrows">
+          <button class="arrow-btn" onclick="ganttShiftYear(-1)" title="Previous year">‹</button>
+          <span id="gantt-year-label" class="gantt-year-label">2025</span>
+          <button class="arrow-btn" onclick="ganttShiftYear(1)" title="Next year">›</button>
+        </div>
+      </div>
+      <div class="gantt-wrap">
+        <div class="gantt-scroll">
+          <div id="gantt-inner"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Timesheet view -->
+    <div id="view-timesheet" class="view">
+      <div class="week-nav">
+        <h1 id="ts-week-label">Timesheets — week of <em>loading…</em></h1>
+        <div class="week-arrows">
+          <button class="arrow-btn" onclick="shiftWeek(-1)">‹</button>
+          <button class="today-btn" onclick="goToday()">Today</button>
+          <button class="arrow-btn" onclick="shiftWeek(1)">›</button>
+        </div>
+      </div>
+      <div class="ts-person-tabs" id="ts-person-tabs"></div>
+      <div class="ts-matrix-wrap">
+        <div class="ts-matrix-scroll">
+          <div id="ts-matrix-inner"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manage view -->
+    <div id="view-manage" class="view">
+      <div class="week-nav">
+        <h1>People <em>&</em> projects</h1>
+      </div>
+      <div class="panel-grid">
+        <div class="panel-card">
+          <div class="panel-header">
+            <span>People</span>
+            <button class="add-alloc-btn" onclick="openModal('person')">+ add</button>
+          </div>
+          <div id="people-list"></div>
+        </div>
+        <div class="panel-card">
+          <div class="panel-header">
+            <span>Projects</span>
+            <button class="add-alloc-btn" onclick="openModal('project')">+ add</button>
+          </div>
+          <div id="projects-list"></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Modal -->
+<div class="modal-bg" id="modal-bg" onclick="handleModalBgClick(event)">
+  <div class="modal" id="modal">
+    <h2 id="modal-title">Add</h2>
+    <div id="modal-body"></div>
+    <div class="modal-actions" id="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-save" id="modal-save" onclick="saveModal()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Storage layer ─────────────────────────────────────────────────────────────
+// All data access goes through this object. To migrate to a backend,
+// replace these methods with fetch() calls and make them async.
+const db = {
+  _key: k => 'ra_' + k,
+  get(k)    { try { return JSON.parse(localStorage.getItem(this._key(k))) || []; } catch(e) { return []; } },
+  set(k, v) { localStorage.setItem(this._key(k), JSON.stringify(v)); },
+  persons()     { return this.get('persons'); },
+  projects()    { return this.get('projects'); },
+  allocations() { return this.get('allocations'); },
+  savePerson(p)     { const a = this.persons(); const i = a.findIndex(x=>x.id===p.id); i>=0?a[i]=p:a.push(p); this.set('persons', a); },
+  saveProject(p)    { const a = this.projects(); const i = a.findIndex(x=>x.id===p.id); i>=0?a[i]=p:a.push(p); this.set('projects', a); },
+  saveAllocation(al){ const a = this.allocations(); const i = a.findIndex(x=>x.id===al.id); i>=0?a[i]=al:a.push(al); this.set('allocations', a); },
+  deletePerson(id)  { this.set('persons', this.persons().filter(x=>x.id!==id)); this.set('allocations', this.allocations().filter(x=>x.personId!==id)); this.deletePersonTimesheets(id); },
+  deleteProject(id) { this.set('projects', this.projects().filter(x=>x.id!==id)); this.set('allocations', this.allocations().filter(x=>x.projectId!==id)); this.deleteProjectTimesheets(id); },
+  deleteAllocation(id) { this.set('allocations', this.allocations().filter(x=>x.id!==id)); },
+  timesheets()    { return this.get('timesheets'); },
+  saveTimesheet(t){ const a = this.timesheets(); const i = a.findIndex(x=>x.id===t.id); i>=0?a[i]=t:a.push(t); this.set('timesheets', a); },
+  deleteTimesheet(id){ this.set('timesheets', this.timesheets().filter(x=>x.id!==id)); },
+  deletePersonTimesheets(pid){ this.set('timesheets', this.timesheets().filter(x=>x.personId!==pid)); },
+  deleteProjectTimesheets(pid){ this.set('timesheets', this.timesheets().filter(x=>x.projectId!==pid)); },
+};
+
+// ── Project colour palette ─────────────────────────────────────────────────────
+const COLORS = [
+  { bg:'#e8f0eb', text:'#2b4d3a', dot:'#3a7a55' },
+  { bg:'#eeedfe', text:'#3c3489', dot:'#7f77dd' },
+  { bg:'#faeeda', text:'#633806', dot:'#ba7517' },
+  { bg:'#faece7', text:'#4a1b0c', dot:'#d85a30' },
+  { bg:'#e6f1fb', text:'#0c447c', dot:'#378add' },
+  { bg:'#fbeaf0', text:'#4b1528', dot:'#d4537e' },
+  { bg:'#eaf3de', text:'#173404', dot:'#639922' },
+  { bg:'#fcebeb', text:'#501313', dot:'#e24b4a' },
+];
+
+// ── Week state ────────────────────────────────────────────────────────────────
+let weekOffset = 0; // weeks from current
+
+function getMondayOf(offset) {
+  const d = new Date();
+  const day = d.getDay(); // 0=sun
+  const diff = (day === 0 ? -6 : 1 - day);
+  d.setDate(d.getDate() + diff + offset * 7);
+  d.setHours(0,0,0,0);
+  return d;
+}
+
+function fmtDate(d) {
+  return d.toLocaleDateString('en-NL', { day:'numeric', month:'short', year:'numeric' });
+}
+
+function shiftWeek(dir) { weekOffset += dir; render(); }
+function goToday()      { weekOffset = 0; render(); }
+
+// ── Allocation logic ──────────────────────────────────────────────────────────
+function allocationsForWeek(personId, weekStart) {
+  const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+  return db.allocations().filter(al => {
+    if (al.personId !== personId) return false;
+    const s = new Date(al.startDate), e = new Date(al.endDate);
+    return s <= weekEnd && e >= weekStart;
+  });
+}
+
+function totalPct(personId, weekStart) {
+  return allocationsForWeek(personId, weekStart).reduce((s, al) => s + al.pct, 0);
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  renderWeekNav();
+  renderAllocationTable();
+  renderSummary();
+  renderProjects();
+  renderGantt();
+  renderTimesheet();
+  renderManage();
+}
+
+// ── Timesheet state ───────────────────────────────────────────────────────────
+let tsSelectedPerson = null;
+
+function tsSelectPerson(id) {
+  tsSelectedPerson = id;
+  renderTimesheet();
+}
+
+function renderTimesheet() {
+  const persons  = db.persons();
+  const projects = db.projects();
+
+  if (!tsSelectedPerson && persons.length) tsSelectedPerson = persons[0].id;
+
+  const tabsEl = document.getElementById('ts-person-tabs');
+  if (!tabsEl) return;
+  tabsEl.innerHTML = persons.map(p =>
+    `<button class="ts-person-tab${p.id===tsSelectedPerson?' active':''}" onclick="tsSelectPerson('${p.id}')">${esc(p.name)}</button>`
+  ).join('');
+
+  const weekStart = getMondayOf(weekOffset);
+  const lbl = document.getElementById('ts-week-label');
+  if (lbl) lbl.innerHTML = `Timesheets — week of <em>${fmtDate(weekStart)}</em>`;
+
+  const inner = document.getElementById('ts-matrix-inner');
+  if (!inner) return;
+
+  const person = persons.find(p => p.id === tsSelectedPerson);
+  if (!person) { inner.innerHTML = `<div class="ts-empty-state">No people yet.</div>`; return; }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const toISO = d => d.toISOString().split('T')[0];
+  const DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+  // Build day dates for the week
+  const days = DAY_NAMES.map((name, di) => {
+    const d = new Date(weekStart); d.setDate(d.getDate() + di);
+    return { name, date: d, dateStr: toISO(d), isToday: d.getTime() === today.getTime() };
+  });
+
+  // Get all projects this person is allocated to at ANY point during the week
+  const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+  const allocatedProjIds = [...new Set(
+    db.allocations()
+      .filter(al => {
+        if (al.personId !== tsSelectedPerson) return false;
+        return new Date(al.startDate) <= weekEnd && new Date(al.endDate) >= weekStart;
+      })
+      .map(al => al.projectId)
+  )];
+  const allocatedProjects = projects.filter(pr => allocatedProjIds.includes(pr.id));
+
+  if (!allocatedProjects.length) {
+    inner.innerHTML = `<div class="ts-empty-state">No active allocations for ${esc(person.name)} this week.<br>Assign them to a project first.</div>`;
+    return;
+  }
+
+  const allTimesheets = db.timesheets();
+
+  // Build lookup: [projectId][dateStr] -> [entries]
+  const entryMap = {};
+  allTimesheets.filter(t => t.personId === tsSelectedPerson).forEach(t => {
+    if (!entryMap[t.projectId]) entryMap[t.projectId] = {};
+    if (!entryMap[t.projectId][t.date]) entryMap[t.projectId][t.date] = [];
+    entryMap[t.projectId][t.date].push(t);
+  });
+
+  // Compute day totals and project totals
+  const dayTotals = {};
+  const projTotals = {};
+  let grandTotal = 0;
+  days.forEach(day => { dayTotals[day.dateStr] = 0; });
+  allocatedProjects.forEach(pr => { projTotals[pr.id] = 0; });
+
+  allTimesheets.filter(t => t.personId === tsSelectedPerson).forEach(t => {
+    const inWeek = days.some(d => d.dateStr === t.date);
+    if (!inWeek) return;
+    if (dayTotals[t.date] !== undefined) dayTotals[t.date] += t.hours;
+    if (projTotals[t.projectId] !== undefined) projTotals[t.projectId] += t.hours;
+    grandTotal += t.hours;
+  });
+
+  // Header row
+  const headerCells = days.map(day =>
+    `<th class="${day.isToday ? 'today-col' : ''}">${day.name}<br><span style="font-size:11px;opacity:0.7">${day.date.getDate()}</span></th>`
+  ).join('');
+
+  // Project rows
+  const projRows = allocatedProjects.map(pr => {
+    const c = COLORS[pr.colorIdx % COLORS.length];
+
+    const dayCells = days.map(day => {
+      const entries = (entryMap[pr.id] && entryMap[pr.id][day.dateStr]) || [];
+      const isAllocated = getAllocatedProjectsForDate(tsSelectedPerson, day.dateStr).some(p => p.id === pr.id);
+
+      const entryHtml = entries.map(t =>
+        `<div class="ts-cell-entry">
+          <span class="ts-cell-hours">${t.hours}h</span>
+          ${t.note ? `<span class="ts-cell-note">${esc(t.note)}</span>` : ''}
+          <span class="ts-cell-actions">
+            <button class="ts-cell-btn" onclick="openEditModal('timesheet','${t.id}')" title="Edit">✎</button>
+            <button class="ts-cell-btn" onclick="deleteTimesheet('${t.id}')" title="Delete">×</button>
+          </span>
+        </div>`
+      ).join('');
+
+      const addHtml = isAllocated
+        ? `<button class="ts-add-cell" onclick="openTimesheetEntry('${tsSelectedPerson}','${day.dateStr}','${pr.id}')">+ log</button>`
+        : `<div class="ts-no-alloc">—</div>`;
+
+      return `<td><div class="ts-cell-inner">${entryHtml}${addHtml}</div></td>`;
+    }).join('');
+
+    const rowTotal = projTotals[pr.id] || 0;
+    return `<tr>
+      <td class="proj-name-cell">
+        <div class="ts-proj-label">
+          <span class="ts-proj-dot" style="background:${c.dot}"></span>
+          <span class="ts-proj-name-text">${esc(pr.name)}</span>
+        </div>
+      </td>
+      ${dayCells}
+      <td class="sum-cell${rowTotal===0?' zero':''}">${rowTotal > 0 ? rowTotal + 'h' : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  // Sum row (day totals)
+  const sumCells = days.map(day => {
+    const t = dayTotals[day.dateStr] || 0;
+    return `<td class="${t === 0 ? 'zero' : ''}" style="color:${t>0?'var(--text)':'var(--muted)'};font-weight:${t>0?'500':'400'}">${t > 0 ? t + 'h' : '—'}</td>`;
+  }).join('');
+
+  inner.innerHTML = `
+    <table class="ts-matrix">
+      <thead>
+        <tr>
+          <th class="proj-col">Project</th>
+          ${headerCells}
+          <th class="sum-col">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${projRows}
+        <tr class="sum-row">
+          <td class="proj-name-cell">Day total</td>
+          ${sumCells}
+          <td class="grand-total">${grandTotal > 0 ? grandTotal + 'h' : '—'}</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+}
+
+function openTimesheetEntry(personId, date, projectId) {
+  currentModal = 'timesheet';
+  editingId = null;
+  tsSelectedPerson = personId;
+  document.getElementById('modal-title').textContent = 'Log time';
+  document.getElementById('modal-body').innerHTML = buildForm('timesheet', { personId, date, projectId });
+  document.getElementById('modal-actions').innerHTML = `
+    <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    <button class="btn-save" onclick="saveModal()">Save</button>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function deleteTimesheet(id) {
+  db.deleteTimesheet(id);
+  renderTimesheet();
+}
+
+function renderProjects() {
+  const weekStart = getMondayOf(weekOffset);
+  const projects = db.projects();
+  const persons  = db.persons();
+  const allocs   = db.allocations();
+  const weekEnd  = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+
+  const lbl = document.getElementById('proj-week-label');
+  if (lbl) lbl.innerHTML = `Projects — week of <em>${fmtDate(weekStart)}</em>`;
+
+  const grid = document.getElementById('projects-grid');
+  if (!grid) return;
+
+  if (!projects.length) {
+    grid.innerHTML = `<div style="grid-column:1/-1"><div class="empty-state"><h2>No projects yet</h2><p>Add your first project using the sidebar.</p></div></div>`;
+    return;
+  }
+
+  grid.innerHTML = projects.map(pr => {
+    const c = COLORS[pr.colorIdx % COLORS.length];
+
+    // find allocations active this week for this project
+    const activeAllocs = allocs.filter(al => {
+      if (al.projectId !== pr.id) return false;
+      const s = new Date(al.startDate), e = new Date(al.endDate);
+      return s <= weekEnd && e >= weekStart;
+    });
+
+    // group by person (a person can have multiple alloc records for same project — sum them)
+    const byPerson = {};
+    const poByPerson = {};
+    activeAllocs.forEach(al => {
+      byPerson[al.personId] = (byPerson[al.personId] || 0) + al.pct;
+      if (al.po) {
+        if (!poByPerson[al.personId]) poByPerson[al.personId] = new Set();
+        poByPerson[al.personId].add(al.po);
+      }
+    });
+
+    const assignedPersonIds = Object.keys(byPerson);
+    const totalFtePct = assignedPersonIds.reduce((s, pid) => s + byPerson[pid], 0);
+    const fteFull = (totalFtePct / 100).toFixed(1); // e.g. 1.5 FTE
+
+    // stacked bar segments — one per person, capped at 100% each
+    const stackedSegs = assignedPersonIds.map((pid, i) => {
+      const pPct = Math.min(byPerson[pid], 100);
+      const segW = Math.max((pPct / Math.max(totalFtePct, 100)) * 100, 2);
+      const hue = (i * 47 + pr.colorIdx * 30) % 360;
+      return `<div class="project-stacked-seg" style="width:${segW}%;background:${c.dot};opacity:${0.5 + (i % 3) * 0.2}"></div>`;
+    }).join('');
+
+    // person rows
+    const personRows = assignedPersonIds.length
+      ? assignedPersonIds.map(pid => {
+          const person = persons.find(p => p.id === pid);
+          if (!person) return '';
+          const pct = byPerson[pid];
+          const barW = Math.min(pct, 100);
+          const pos = poByPerson[pid] ? [...poByPerson[pid]].join(', ') : '';
+          return `<div class="project-person-row">
+            <div class="project-person-dot" style="background:${c.dot}"></div>
+            <div style="flex:1">
+              <div class="project-person-name">${esc(person.name)}</div>
+              <div class="project-person-role">${pos ? `<span style="color:var(--muted)">${esc(pos)}</span>` : esc(person.role || '')}</div>
+            </div>
+            <div class="project-person-pct" style="color:${c.dot}">${pct}%</div>
+            <div class="project-person-bar-bg">
+              <div class="project-person-bar-fill" style="width:${barW}%;background:${c.dot}"></div>
+            </div>
+          </div>`;
+        }).join('')
+      : `<div class="project-empty">No one assigned this week</div>`;
+
+    return `<div class="project-card">
+      <div class="project-card-header">
+        <div class="project-color-bar" style="background:${c.dot}"></div>
+        <div style="flex:1">
+          <div class="project-card-title">${esc(pr.name)}</div>
+          <div class="project-card-status">${esc(pr.status || '')}</div>
+        </div>
+        <div class="project-card-meta">
+          <div class="project-card-fte" style="color:${c.dot}">${assignedPersonIds.length > 0 ? fteFull : '—'}</div>
+          <div class="project-card-fte-lbl">FTE this week</div>
+        </div>
+      </div>
+      <div class="project-stacked-bar" style="background:var(--bg)">${stackedSegs || '<div style="width:100%;height:6px;background:var(--border)"></div>'}</div>
+      <div class="project-people">${personRows}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Gantt state ───────────────────────────────────────────────────────────────
+let ganttYear = new Date().getFullYear();
+function ganttShiftYear(dir) { ganttYear += dir; renderGantt(); }
+
+function renderGantt() {
+  const inner = document.getElementById('gantt-inner');
+  if (!inner) return;
+
+  const lbl = document.getElementById('gantt-year-label');
+  if (lbl) lbl.textContent = ganttYear;
+
+  const persons  = db.persons();
+  const projects = db.projects();
+  const allocs   = db.allocations();
+
+  if (!persons.length) {
+    inner.innerHTML = `<div class="gantt-empty">No people yet — add team members to see the Gantt chart.</div>`;
+    return;
+  }
+
+  const MONTHS = 12;
+  const today  = new Date();
+  const NAME_W = 160; // px for name column
+  const COL_W  = 72;  // px per month column
+
+  // total grid columns: name + 12 months
+  const gridCols = `${NAME_W}px repeat(${MONTHS}, ${COL_W}px)`;
+
+  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // Header
+  const headerCols = MONTH_NAMES.map((m, i) => {
+    const isCurrent = ganttYear === today.getFullYear() && i === today.getMonth();
+    return `<div class="gantt-month-label${isCurrent ? ' is-current' : ''}">${m}</div>`;
+  }).join('');
+
+  // For each person, build 12 month cells
+  const rows = persons.map(person => {
+    const cells = Array.from({length: MONTHS}, (_, mi) => {
+      const monthStart = new Date(ganttYear, mi, 1);
+      const monthEnd   = new Date(ganttYear, mi + 1, 0); // last day of month
+      const isCurrent  = ganttYear === today.getFullYear() && mi === today.getMonth();
+
+      // Find allocations overlapping this month for this person
+      const monthAllocs = allocs.filter(al => {
+        if (al.personId !== person.id) return false;
+        const s = new Date(al.startDate), e = new Date(al.endDate);
+        return s <= monthEnd && e >= monthStart;
+      });
+
+      // Group by project and sum %, collect POs
+      const byProject = {};
+      const poByProject = {};
+      monthAllocs.forEach(al => {
+        byProject[al.projectId] = (byProject[al.projectId] || 0) + al.pct;
+        if (al.po) {
+          if (!poByProject[al.projectId]) poByProject[al.projectId] = new Set();
+          poByProject[al.projectId].add(al.po);
+        }
+      });
+
+      const totalPctMonth = Object.values(byProject).reduce((s, v) => s + v, 0);
+
+      // Cell background based on total allocation
+      let cellBg = '', cellBorder = '';
+      if (totalPctMonth === 0) {
+        cellBg = ''; cellBorder = '';
+      } else if (totalPctMonth >= 90 && totalPctMonth <= 100) {
+        cellBg = 'background:#e8f0eb;'; cellBorder = 'border-bottom:2px solid #3a7a55;';
+      } else if (totalPctMonth >= 80 && totalPctMonth < 90) {
+        cellBg = 'background:#fdf3e3;'; cellBorder = 'border-bottom:2px solid #ba7517;';
+      } else {
+        cellBg = 'background:#fbeae9;'; cellBorder = 'border-bottom:2px solid #b83228;';
+      }
+
+      const bars = Object.entries(byProject).map(([projId, pct]) => {
+        const proj = projects.find(pr => pr.id === projId);
+        if (!proj) return '';
+        const c = COLORS[proj.colorIdx % COLORS.length];
+        const pos = poByProject[projId] ? [...poByProject[projId]].join(', ') : '';
+        const tooltip = `${proj.name}: ${pct}%${pos ? ' · ' + pos : ''} (total: ${totalPctMonth}%)`;
+        return `<div class="gantt-bar"
+          style="background:rgba(255,255,255,0.55);color:${c.text};border-left:2px solid ${c.dot};width:100%"
+          title="${esc(tooltip)}">
+          ${esc(proj.name)} ${pct}%${pos ? `<span style="opacity:0.6;font-size:9px;margin-left:3px">${esc(pos)}</span>` : ''}
+        </div>`;
+      }).join('');
+
+      // Today's position line inside current month cell
+      let todayLine = '';
+      if (isCurrent) {
+        const daysInMonth = monthEnd.getDate();
+        const dayOfMonth  = today.getDate();
+        const leftPct     = ((dayOfMonth - 0.5) / daysInMonth) * 100;
+        todayLine = `<div class="gantt-today-line" style="left:${leftPct.toFixed(1)}%"></div>`;
+      }
+
+      return `<div class="gantt-month-cell${isCurrent ? ' is-current' : ''}" style="${cellBg}${cellBorder}">${todayLine}${bars || ''}</div>`;
+    }).join('');
+
+    return `<div class="gantt-row" style="grid-template-columns:${gridCols}">
+      <div class="gantt-name-cell">
+        <div class="gn">${esc(person.name)}</div>
+        <div class="gr">${esc(person.role || '')}</div>
+      </div>
+      ${cells}
+    </div>`;
+  }).join('');
+
+  inner.innerHTML = `
+    <div class="gantt-header" style="grid-template-columns:${gridCols}">
+      <div class="gantt-header-name">Person</div>
+      ${headerCols}
+    </div>
+    ${rows}
+  `;
+}
+
+function renderWeekNav() {
+  const mon = getMondayOf(weekOffset);
+  const sun = new Date(mon); sun.setDate(sun.getDate() + 6);
+  const label = weekOffset === 0 ? 'current week'
+    : weekOffset === 1 ? 'next week'
+    : weekOffset === -1 ? 'last week'
+    : fmtDate(mon) + ' – ' + fmtDate(sun);
+  document.getElementById('week-label').innerHTML = `Week of <em>${fmtDate(mon)}</em><span style="color:var(--muted);font-size:14px;font-style:normal;margin-left:10px">${weekOffset!==0?'('+label+')':''}</span>`;
+}
+
+function renderSummary() {
+  const weekStart = getMondayOf(weekOffset);
+  const persons = db.persons();
+  let over=0, ok=0, low=0, unassigned=0;
+  persons.forEach(p => {
+    const t = totalPct(p.id, weekStart);
+    if (t > 100) over++;
+    else if (t >= 50) ok++;
+    else if (t > 0) low++;
+    else unassigned++;
+  });
+  document.getElementById('summary-row').innerHTML = `
+    <div class="stat-card over"><div class="val">${over}</div><div class="lbl">overallocated</div></div>
+    <div class="stat-card ok"><div class="val">${ok}</div><div class="lbl">healthy</div></div>
+    <div class="stat-card low"><div class="val">${low}</div><div class="lbl">underallocated</div></div>
+    <div class="stat-card"><div class="val">${unassigned}</div><div class="lbl">unassigned</div></div>
+  `;
+}
+
+function renderAllocationTable() {
+  const weekStart = getMondayOf(weekOffset);
+  const persons = db.persons();
+  const projects = db.projects();
+  const tbody = document.getElementById('alloc-tbody');
+  if (!persons.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><h2>No people yet</h2><p>Add your first team member using the sidebar.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = persons.map(p => {
+    const als = allocationsForWeek(p.id, weekStart);
+    const total = als.reduce((s,al)=>s+al.pct, 0);
+    const badge = total > 100 ? `<span class="badge badge-over">${total}%</span>`
+      : total >= 50 ? `<span class="badge badge-ok">${total}%</span>`
+      : total > 0 ? `<span class="badge badge-low">${total}%</span>`
+      : `<span class="badge badge-empty">—</span>`;
+
+    const barPct = Math.min(total, 100);
+    const overPct = total > 100 ? Math.min((total-100)/100*100,30) : 0;
+    const barColor = total > 100 ? 'var(--red)' : total >= 50 ? 'var(--green)' : 'var(--amber)';
+    const bar = `<div class="load-bar-wrap">
+      <div class="load-bar-bg">
+        <div class="load-bar-fill" style="width:${barPct}%;background:${barColor}"></div>
+        ${overPct ? `<div class="load-bar-over" style="width:${overPct}%"></div>` : ''}
+      </div>
+    </div>`;
+
+    const chips = als.map(al => {
+      const proj = projects.find(pr=>pr.id===al.projectId);
+      if (!proj) return '';
+      const c = COLORS[proj.colorIdx % COLORS.length];
+      return `<span class="chip" style="background:${c.bg};color:${c.text};border-color:transparent">
+        <span class="dot" style="background:${c.dot}"></span>${proj.name} ${al.pct}%${al.po ? `<span style="opacity:0.65;font-size:10px;margin-left:3px">${esc(al.po)}</span>` : ''}
+        <button class="chip-remove" onclick="openEditModal('allocation','${al.id}')" title="Edit" style="opacity:0.5;font-size:11px">✎</button>
+        <button class="chip-remove" onclick="removeAllocation('${al.id}')" title="Remove">×</button>
+      </span>`;
+    }).join('');
+
+    return `<tr>
+      <td><div class="person-name">${esc(p.name)}</div><div class="person-role">${esc(p.role||'')}</div></td>
+      <td><div class="chips">${chips}<button class="add-alloc-btn" onclick="openModal('allocation','${p.id}')">+ assign</button></div></td>
+      <td>${badge}</td>
+      <td>${bar}</td>
+      <td><button class="panel-item-del" onclick="confirmDelete('person','${p.id}')" title="Remove person">×</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderManage() {
+  const persons = db.persons();
+  const projects = db.projects();
+  document.getElementById('people-list').innerHTML = persons.length
+    ? persons.map(p=>`<div class="panel-item">
+        <div class="panel-item-text"><div class="panel-item-name">${esc(p.name)}</div><div class="panel-item-sub">${esc(p.role||'')}</div></div>
+        <button class="panel-item-del" onclick="openEditModal('person','${p.id}')" title="Edit" style="opacity:0.5;font-size:13px">✎</button>
+        <button class="panel-item-del" onclick="confirmDelete('person','${p.id}')">×</button>
+      </div>`).join('')
+    : `<div style="padding:16px;color:var(--muted);font-size:12px">No people yet.</div>`;
+
+  document.getElementById('projects-list').innerHTML = projects.length
+    ? projects.map(pr=>{
+        const c = COLORS[pr.colorIdx % COLORS.length];
+        return `<div class="panel-item">
+          <span class="panel-item-dot" style="background:${c.dot}"></span>
+          <div class="panel-item-text"><div class="panel-item-name">${esc(pr.name)}</div><div class="panel-item-sub">${esc(pr.status||'')}</div></div>
+          <button class="panel-item-del" onclick="openEditModal('project','${pr.id}')" title="Edit" style="opacity:0.5;font-size:13px">✎</button>
+          <button class="panel-item-del" onclick="confirmDelete('project','${pr.id}')">×</button>
+        </div>`;
+      }).join('')
+    : `<div style="padding:16px;color:var(--muted);font-size:12px">No projects yet.</div>`;
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
+let currentModal = null;
+let editingId = null;
+let prefillPersonId = null;
+
+function openModal(type, prefillId) {
+  currentModal = type;
+  editingId = null;
+  prefillPersonId = type === 'allocation' ? prefillId : null;
+  const titles = { person:'Add person', project:'Add project', allocation:'Add allocation' };
+  document.getElementById('modal-title').textContent = titles[type];
+  document.getElementById('modal-body').innerHTML = buildForm(type, null);
+  document.getElementById('modal-actions').innerHTML = `
+    <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    <button class="btn-save" onclick="saveModal()">Save</button>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function openEditModal(type, id) {
+  currentModal = type;
+  editingId = id;
+  prefillPersonId = null;
+  const titles = { person:'Edit person', project:'Edit project', allocation:'Edit allocation', timesheet:'Edit time entry' };
+  document.getElementById('modal-title').textContent = titles[type];
+  let existing = null;
+  if (type === 'person')     existing = db.persons().find(x => x.id === id);
+  if (type === 'project')    existing = db.projects().find(x => x.id === id);
+  if (type === 'allocation') existing = db.allocations().find(x => x.id === id);
+  if (type === 'timesheet')  existing = db.timesheets().find(x => x.id === id);
+  document.getElementById('modal-body').innerHTML = buildForm(type, existing);
+  document.getElementById('modal-actions').innerHTML = `
+    <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    <button class="btn-save" onclick="saveModal()">Save changes</button>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function buildForm(type, existing) {
+  if (type === 'person') return `
+    <div class="form-row"><label>Name</label><input id="f-name" placeholder="e.g. Sofia M." value="${esc(existing?.name||'')}" autofocus></div>
+    <div class="form-row"><label>Role</label><input id="f-role" placeholder="e.g. Senior engineer" value="${esc(existing?.role||'')}"></div>`;
+
+  if (type === 'project') {
+    const colorOpts = COLORS.map((c,i)=>`<option value="${i}" ${i===(existing?.colorIdx??0)?'selected':''}>Colour ${i+1}</option>`).join('');
+    return `
+      <div class="form-row"><label>Project name</label><input id="f-pname" placeholder="e.g. Phoenix" value="${esc(existing?.name||'')}" autofocus></div>
+      <div class="form-row"><label>Status</label><input id="f-pstatus" placeholder="e.g. Active, On hold" value="${esc(existing?.status||'')}"></div>
+      <div class="form-row"><label>Colour</label><select id="f-pcolor">${colorOpts}</select></div>`;
+  }
+
+  if (type === 'allocation') {
+    const persons  = db.persons();
+    const projects = db.projects();
+    const selPerson  = existing?.personId  || prefillPersonId;
+    const selProject = existing?.projectId || null;
+    const personOpts  = persons.map(p=>`<option value="${p.id}" ${p.id===selPerson?'selected':''}>${esc(p.name)}</option>`).join('');
+    const projectOpts = projects.map(pr=>`<option value="${pr.id}" ${pr.id===selProject?'selected':''}>${esc(pr.name)}</option>`).join('');
+    const mon = getMondayOf(weekOffset);
+    const sun = new Date(mon); sun.setDate(sun.getDate()+6);
+    const toISO = d => d.toISOString().split('T')[0];
+    const startVal = existing?.startDate || toISO(mon);
+    const endVal   = existing?.endDate   || toISO(sun);
+    const pctVal   = existing?.pct ?? 100;
+    const poVal    = existing?.po  || '';
+    return `
+      <div class="form-row"><label>Person</label><select id="f-aperson">${personOpts||'<option disabled>Add people first</option>'}</select></div>
+      <div class="form-row"><label>Project</label><select id="f-aproject">${projectOpts||'<option disabled>Add projects first</option>'}</select></div>
+      <div class="form-row-inline">
+        <div class="form-row"><label>Allocation %</label><input id="f-apct" type="number" min="1" max="200" value="${pctVal}" placeholder="100"></div>
+        <div class="form-row"><label>PO number</label><input id="f-apo" placeholder="e.g. PO-2024-001" value="${esc(poVal)}"></div>
+      </div>
+      <div class="form-row-inline">
+        <div class="form-row"><label>Start date</label><input id="f-astart" type="date" value="${startVal}"></div>
+        <div class="form-row"><label>End date</label><input id="f-aend" type="date" value="${endVal}"></div>
+      </div>`;
+  }
+
+  if (type === 'timesheet') {
+    // existing carries { personId, date } as prefill context
+    const persons  = db.persons();
+    const toISO = d => d.toISOString().split('T')[0];
+    const today  = toISO(new Date());
+    const dateVal    = existing?.date       || today;
+    const personVal  = existing?.personId   || tsSelectedPerson || (persons[0]?.id || '');
+    const hoursVal   = existing?.hours      || '';
+    const noteVal    = existing?.note       || '';
+
+    // Only show projects this person is allocated to on the chosen date
+    const allocatedProjects = getAllocatedProjectsForDate(personVal, dateVal);
+    const projectOpts = allocatedProjects.length
+      ? allocatedProjects.map(pr => `<option value="${pr.id}" ${pr.id===(existing?.projectId||'')?'selected':''}>${esc(pr.name)}</option>`).join('')
+      : '<option disabled value="">No projects allocated on this date</option>';
+    const personOpts = persons.map(p => `<option value="${p.id}" ${p.id===personVal?'selected':''}>${esc(p.name)}</option>`).join('');
+
+    return `
+      <div class="form-row-inline">
+        <div class="form-row"><label>Person</label><select id="f-ts-person" onchange="refreshTimesheetProjectOpts(this.value, document.getElementById('f-ts-date').value)">${personOpts}</select></div>
+        <div class="form-row"><label>Date</label><input id="f-ts-date" type="date" value="${dateVal}" onchange="refreshTimesheetProjectOpts(document.getElementById('f-ts-person').value, this.value)"></div>
+      </div>
+      <div class="form-row"><label>Project</label><select id="f-ts-project">${projectOpts}</select></div>
+      <div class="form-row-inline">
+        <div class="form-row"><label>Hours</label><input id="f-ts-hours" type="number" min="0.25" max="24" step="0.25" value="${hoursVal}" placeholder="e.g. 6"></div>
+        <div class="form-row"><label>Note <span style="opacity:.5">(optional)</span></label><input id="f-ts-note" placeholder="What did you work on?" value="${esc(noteVal)}"></div>
+      </div>`;
+  }
+}
+
+function refreshTimesheetProjectOpts(personId, date) {
+  const sel = document.getElementById('f-ts-project');
+  if (!sel) return;
+  const allocatedProjects = getAllocatedProjectsForDate(personId, date);
+  sel.innerHTML = allocatedProjects.length
+    ? allocatedProjects.map(pr => `<option value="${pr.id}">${esc(pr.name)}</option>`).join('')
+    : '<option disabled value="">No projects allocated on this date</option>';
+}
+
+function getAllocatedProjectsForDate(personId, dateStr) {
+  const d = new Date(dateStr);
+  const allocs = db.allocations().filter(al => {
+    if (al.personId !== personId) return false;
+    return new Date(al.startDate) <= d && new Date(al.endDate) >= d;
+  });
+  const projectIds = [...new Set(allocs.map(al => al.projectId))];
+  return db.projects().filter(pr => projectIds.includes(pr.id));
+}
+
+function saveModal() {
+  if (currentModal === 'person') {
+    const name = document.getElementById('f-name').value.trim();
+    if (!name) return;
+    db.savePerson({ id: editingId || uid(), name, role: document.getElementById('f-role').value.trim() });
+  } else if (currentModal === 'project') {
+    const name = document.getElementById('f-pname').value.trim();
+    if (!name) return;
+    db.saveProject({ id: editingId || uid(), name, status: document.getElementById('f-pstatus').value.trim(), colorIdx: parseInt(document.getElementById('f-pcolor').value) });
+  } else if (currentModal === 'allocation') {
+    const personId  = document.getElementById('f-aperson')?.value;
+    const projectId = document.getElementById('f-aproject')?.value;
+    const pct       = parseInt(document.getElementById('f-apct').value);
+    const po        = document.getElementById('f-apo')?.value.trim() || '';
+    const startDate = document.getElementById('f-astart').value;
+    const endDate   = document.getElementById('f-aend').value;
+    if (!personId || !projectId || !pct || !startDate || !endDate) return;
+    db.saveAllocation({ id: editingId || uid(), personId, projectId, pct, po, startDate, endDate });
+  } else if (currentModal === 'timesheet') {
+    const personId  = document.getElementById('f-ts-person')?.value;
+    const projectId = document.getElementById('f-ts-project')?.value;
+    const date      = document.getElementById('f-ts-date')?.value;
+    const hours     = parseFloat(document.getElementById('f-ts-hours')?.value);
+    const note      = document.getElementById('f-ts-note')?.value.trim() || '';
+    if (!personId || !projectId || !date || !hours || isNaN(hours)) return;
+    // Validate person is allocated to project on this date
+    const ok = getAllocatedProjectsForDate(personId, date).some(pr => pr.id === projectId);
+    if (!ok) { alert('This person has no active allocation for that project on the selected date.'); return; }
+    db.saveTimesheet({ id: editingId || uid(), personId, projectId, date, hours, note });
+  }
+  closeModal();
+  render();
+}
+
+function removeAllocation(id) {
+  db.deleteAllocation(id);
+  render();
+}
+
+function confirmDelete(type, id) {
+  currentModal = 'delete';
+  const name = type === 'person'
+    ? db.persons().find(p=>p.id===id)?.name
+    : db.projects().find(p=>p.id===id)?.name;
+  document.getElementById('modal-title').textContent = 'Remove ' + type;
+  document.getElementById('modal-body').innerHTML = `<p style="color:var(--muted);margin-bottom:8px">Remove <strong>${esc(name)}</strong>? This will also remove all their allocations.</p>`;
+  document.getElementById('modal-actions').innerHTML = `
+    <button class="btn-danger" onclick="doDelete('${type}','${id}')">Remove</button>
+    <button class="btn-cancel" onclick="closeModal()">Cancel</button>`;
+  document.getElementById('modal-bg').classList.add('open');
+}
+
+function doDelete(type, id) {
+  if (type === 'person') db.deletePerson(id);
+  else db.deleteProject(id);
+  closeModal(); render();
+}
+
+function closeModal() { document.getElementById('modal-bg').classList.remove('open'); currentModal = null; }
+function handleModalBgClick(e) { if (e.target === document.getElementById('modal-bg')) closeModal(); }
+
+// ── View switching ─────────────────────────────────────────────────────────────
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`.nav-btn[onclick*="${name}"]`).classList.add('active');
+  render();
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── Seed data (only if empty) ─────────────────────────────────────────────────
+function seedIfEmpty() {
+  if (db.persons().length) return;
+  const pids  = [uid(),uid(),uid(),uid()];
+  const prids = [uid(),uid(),uid()];
+  pids.forEach((id,i)  => db.savePerson({id, name:['Sofia M.','James T.','Priya K.','Luuk V.'][i], role:['Senior engineer','Designer','Product manager','Engineer'][i]}));
+  prids.forEach((id,i) => db.saveProject({id, name:['Phoenix','Atlas','Nova'][i], status:'Active', colorIdx:i}));
+
+  const toISO = d => d.toISOString().split('T')[0];
+  const y = new Date().getFullYear();
+
+  // Multi-month allocations so the Gantt is meaningful
+  db.saveAllocation({id:uid(), personId:pids[0], projectId:prids[0], pct:60, startDate:toISO(new Date(y,0,1)),  endDate:toISO(new Date(y,5,30))}); // Jan–Jun
+  db.saveAllocation({id:uid(), personId:pids[0], projectId:prids[1], pct:40, startDate:toISO(new Date(y,3,1)),  endDate:toISO(new Date(y,8,30))}); // Apr–Sep (overlap = 100% Apr-Jun, then 40% Jul-Sep)
+  db.saveAllocation({id:uid(), personId:pids[0], projectId:prids[2], pct:60, startDate:toISO(new Date(y,7,1)),  endDate:toISO(new Date(y,11,31))}); // Aug–Dec
+
+  db.saveAllocation({id:uid(), personId:pids[1], projectId:prids[0], pct:50, startDate:toISO(new Date(y,0,15)), endDate:toISO(new Date(y,4,31))}); // mid-Jan–May
+  db.saveAllocation({id:uid(), personId:pids[1], projectId:prids[2], pct:50, startDate:toISO(new Date(y,5,1)),  endDate:toISO(new Date(y,11,31))}); // Jun–Dec
+
+  db.saveAllocation({id:uid(), personId:pids[2], projectId:prids[1], pct:100, startDate:toISO(new Date(y,0,1)), endDate:toISO(new Date(y,11,31))}); // full year
+
+  db.saveAllocation({id:uid(), personId:pids[3], projectId:prids[2], pct:80, startDate:toISO(new Date(y,2,1)),  endDate:toISO(new Date(y,7,31))}); // Mar–Aug
+  db.saveAllocation({id:uid(), personId:pids[3], projectId:prids[0], pct:20, startDate:toISO(new Date(y,2,1)),  endDate:toISO(new Date(y,7,31))}); // Mar–Aug (100% total)
+}
+
+seedIfEmpty();
+render();
+</script>
+</body>
+</html>
